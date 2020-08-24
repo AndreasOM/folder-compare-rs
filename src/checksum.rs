@@ -4,10 +4,12 @@ use std::{fmt,fs};
 use std::path::{Path,PathBuf};
 use std::io::Read;
 use crate::checksums::*;
+use crate::command_async::CommandAsync;
 use indicatif::{ProgressBar,ProgressStyle};
-use sha1::Sha1;
 
 use rayon::prelude::*;
+
+use async_trait::async_trait;
 
 #[derive(Debug)]
 pub enum ChecksumError {
@@ -28,35 +30,49 @@ impl Error for ChecksumError {
 
 pub struct Checksum {
     checksum_file: String,
-    base_dir: String,
+    base_dir: PathBuf,
 }
 
 impl Checksum {
-    pub fn new( checksum_file: &str, base_dir: &str ) -> Self {
+    pub fn new( checksum_file: &str, base_dir: &PathBuf ) -> Self {
         Self {
             checksum_file: checksum_file.to_string(),
-            base_dir: base_dir.to_string(),
+            base_dir: base_dir.to_owned(),
         }
     }
+}
 
-    pub async fn run( &mut self ) -> Result<(), Box<dyn Error>> {
+
+#[async_trait]
+impl CommandAsync for Checksum {
+    async fn run( &mut self ) -> anyhow::Result<()> {
         let mut checksums = Checksums::new( "sha1" );
+
+        
+        let bar = ProgressBar::new( 1_000_000u64 );
+        let spinner_style = ProgressStyle::default_spinner()
+            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+            .template("{prefix:.bold.dim} {spinner} {wide_msg} {pos} files found.");
+
+        bar.set_style(spinner_style.clone());
 
         for e in WalkDir::new( &self.base_dir ) {
             match e {
                 Ok( e ) => {
                     match e.metadata() {
                         Ok( m ) => if m.is_file() {
-                            let ce = ChecksumsEntry::new( &e.path().to_path_buf(), m.len(), "" );
+                            bar.inc( 1 );
+                            let rp = e.path().strip_prefix( &self.base_dir )?;
+                            let ce = ChecksumsEntry::new( rp, m.len(), "" );
                             checksums.add( ce );
                         },
                         Err( e ) => {
-                            return Err( Box::new( ChecksumError::Generic( String::from( "Missing metadata" ) ) ) );
+//                            return Err( Box::new( ChecksumError::Generic( String::from( "Missing metadata" ) ) ) );
                         },        
                     };
                 },
                 Err( e ) => {
-                    return Err( Box::new( ChecksumError::Generic( String::from( "WalkDir error" ) ) ) );
+//                    return Err( Box::new( ChecksumError::Generic( String::from( "WalkDir error" ) ) ) );
                 },
             }
         };
@@ -70,26 +86,12 @@ impl Checksum {
             ProgressStyle::default_bar()
             .template( "{spinner:.green} Calculating checksums [{wide_bar:.cyan/blue}] {pos}/{len} {percent}% ETA: ~{eta}" )
         );
+        let algorithm = checksums.algorithm().to_string();
 //        for e in checksums.entries_mut().par_iter_mut() {
         checksums.entries_mut().par_iter_mut()
             .for_each(|e| {
                 bar.inc( 1 );
-                let mut fullpath = PathBuf::new();
-                fullpath.push( "." );
-//                fullpath.push( &self.base_dir );
-                fullpath.push( &e.path() );
-                let mut f = match std::fs::File::open(&fullpath) {
-                    Err( e ) => { dbg!( &fullpath ); panic!("") },   // :TODO: handle
-                    Ok( f ) => f,
-                };
-
-                let mut sha1 = Sha1::new();
-                let mut data = Vec::<u8>::new();
-                // :TODO: read blockwise
-                f.read_to_end(&mut data);
-                sha1.update(&mut data);
-                let hash = sha1.digest();
-                e.set_hash( &hash.to_string().to_uppercase() );
+                e.calculate_hash( &self.base_dir, &algorithm );
             });
 //        }
 //        dbg!( &checksums );

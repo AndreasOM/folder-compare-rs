@@ -1,7 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path,PathBuf};
 use std::error::Error;
 use serde::{Deserialize, Serialize};
 use rayon::prelude::*;
+use std::io::Read;
+use sha1::Sha1;
 
 #[derive(Debug,Deserialize,Serialize)]
 pub struct ChecksumsEntry {
@@ -12,7 +14,7 @@ pub struct ChecksumsEntry {
 
 impl ChecksumsEntry {
     pub fn new(
-        path: &PathBuf,
+        path: &Path,
         size: u64,
         hash: &str,
     ) -> Self {
@@ -27,8 +29,35 @@ impl ChecksumsEntry {
         self.hash = hash.to_string();
     }
 
+    pub fn calculate_hash(&mut self, base_dir: &Path, algorithm: &str ) -> anyhow::Result< () > {
+        let mut fullpath = PathBuf::new();
+        fullpath.push( &base_dir );
+        fullpath.push( &self.path() );
+        let mut f = match std::fs::File::open(&fullpath) {
+            Err( e ) => { dbg!( &fullpath ); panic!("") },   // :TODO: handle
+            Ok( f ) => f,
+        };
+
+        let mut sha1 = Sha1::new();
+        let mut data = Vec::<u8>::new();
+        // :TODO: read blockwise
+        f.read_to_end(&mut data);
+        sha1.update(&mut data);
+        let hash = sha1.digest();
+        self.set_hash( &hash.to_string().to_uppercase() );
+        Ok(())
+    }
+
     pub fn path( &self ) -> &PathBuf {
         &self.path
+    }
+
+    pub fn size( &self ) -> u64 {
+        self.size
+    }
+
+    pub fn hash( &self ) -> &str {
+        &self.hash
     }
 }
 
@@ -54,9 +83,31 @@ impl Checksums {
         Ok(())
     }
 
+    pub fn load( filename: &str ) -> anyhow::Result< Checksums > {
+        let json = std::fs::read_to_string( &filename )?;
+        let s = serde_json::from_str( &json )?;
+        Ok(s)
+    }
+
     pub fn add( &mut self, entry: ChecksumsEntry ) {
         self.total_size += entry.size;
         self.entries.push( entry );
+    }
+
+    pub fn find_mut( &mut self, filename: &PathBuf ) -> Option < &mut ChecksumsEntry > {
+        self.entries.iter_mut().find({ |e|
+            e.path == *filename
+        })
+    }
+
+    pub fn find( &self, filename: &PathBuf ) -> Option < &ChecksumsEntry > {
+        self.entries.iter().find({ |e|
+            e.path == *filename
+        })
+    }
+
+    pub fn algorithm( &self ) -> &str {
+        &self.algorithm
     }
 
     pub fn len( &self ) -> usize {
@@ -77,5 +128,8 @@ impl Checksums {
 
     pub fn entries_mut( &mut self ) -> &mut Vec<ChecksumsEntry> {
         &mut self.entries
+    }
+    pub fn entries( &self ) -> &Vec<ChecksumsEntry> {
+        &self.entries
     }
 }
