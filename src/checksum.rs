@@ -28,6 +28,7 @@ impl Error for ChecksumError {
     }
 }
 
+#[derive(Debug)]
 pub struct Checksum {
     checksum_file: String,
     base_dir: PathBuf,
@@ -41,7 +42,6 @@ impl Checksum {
         }
     }
 }
-
 
 #[async_trait]
 impl CommandAsync for Checksum {

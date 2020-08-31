@@ -14,19 +14,19 @@ use async_trait::async_trait;
 use std::collections::BTreeSet;
 
 #[derive(Debug)]
-pub struct Verifier {
-    checksum_file: String,
-    base_dir: PathBuf,
+pub struct Compare {
+    checksum_file_old: String,
+    checksum_file_new: String,
     changed_file: Option< String >,
     added_file: Option< String >,
     removed_file: Option< String >,
 }
 
-impl Verifier {
-    pub fn new( checksum_file: &str, base_dir: &PathBuf ) -> Self {
+impl Compare {
+    pub fn new( checksum_file_old: &str, checksum_file_new: &str ) -> Self {
         Self {
-            checksum_file: checksum_file.to_string(),
-            base_dir: base_dir.to_owned(),
+            checksum_file_old: checksum_file_old.to_string(),
+            checksum_file_new: checksum_file_new.to_string(),
             changed_file: None,
             added_file: None,
             removed_file: None,
@@ -45,10 +45,12 @@ impl Verifier {
 }
 
 #[async_trait]
-impl CommandAsync for Verifier {
+impl CommandAsync for Compare {
     async fn run( &mut self ) -> anyhow::Result<()> {
-        let old_checksums = Checksums::load( &self.checksum_file )?;
-        let mut new_checksums = Checksums::new( "sha1" );
+        let old_checksums = Checksums::load( &self.checksum_file_old )?;
+        let new_checksums = Checksums::load( &self.checksum_file_new )?;
+
+//        dbg!(&old_checksums, &new_checksums);
 
         let bar = ProgressBar::new( 1_000_000u64 );
         let spinner_style = ProgressStyle::default_spinner()
@@ -57,40 +59,19 @@ impl CommandAsync for Verifier {
 
         bar.set_style(spinner_style.clone());
 
-        for e in WalkDir::new( &self.base_dir ) {
-            match e {
-                Ok( e ) => {
-                    match e.metadata() {
-                        Ok( m ) => if m.is_file() {
-                            bar.inc( 1 );
-                            let rp = e.path().strip_prefix( &self.base_dir )?;
-                            let ce = ChecksumsEntry::new( rp, m.len(), "" );
-                            new_checksums.add( ce );
-                        },
-                        Err( e ) => {
-//                            return Err( Box::new( ChecksumError::Generic( String::from( "Missing metadata" ) ) ) );
-                        },        
-                    };
-                },
-                Err( e ) => {
-//                    return Err( Box::new( ChecksumError::Generic( String::from( "WalkDir error" ) ) ) );
-                },
-            }
-        };
-
-//        dbg!( &new_checksums );
-//        println!( "Calculating checksums for {} files. {} bytes total.", new_checksums.len(), new_checksums.total_size() );
-
         // :TODO: there is high potential for doing this smarter, but for now we just do the brute force, straight forward things
         let mut added = Vec::new();
         let mut changed = Vec::new();
         let mut removed = Vec::new();
         let mut unchanged = Vec::new();
 
-        let algorithm = old_checksums.algorithm().to_string();
-
+        if old_checksums.algorithm() != new_checksums.algorithm() {
+            println!("ERROR: Different algorithms for checksums");
+            return Ok(());
+        };
         for o in old_checksums.entries() {
-            match new_checksums.find_mut( &o.path() ) {
+            bar.inc( 1 );
+            match new_checksums.find( &o.path() ) {
                 None => {
                     removed.push( o.path().to_owned() );
                 },
@@ -98,7 +79,6 @@ impl CommandAsync for Verifier {
                     if o.size() != n.size() {
                         changed.push( o.path().to_owned() );
                     } else {
-                        n.calculate_hash( &self.base_dir, &algorithm );
                         if o.hash() != n.hash() {
                             changed.push( o.path().to_owned() );
                         } else {
@@ -110,17 +90,18 @@ impl CommandAsync for Verifier {
         }
 
         for n in new_checksums.entries() {
+            bar.inc( 1 );
             match old_checksums.find( &n.path() ) {
                 Some( _ ) => {},
                 None => added.push( n.path().to_owned() ),
             }
         }
-
+/*
         dbg!(&unchanged);
         dbg!(&changed);
         dbg!(&removed);
         dbg!(&added);
-
+*/
         if let Some( changed_file ) = &self.changed_file {
             let mut f = std::fs::File::create(&changed_file).expect("create file failed for changed file");
             for e in changed {
