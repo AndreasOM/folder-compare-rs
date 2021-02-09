@@ -5,6 +5,8 @@ use rayon::prelude::*;
 use std::io::Read;
 use sha1::Sha1;
 
+use std::io::BufReader;
+
 #[derive(Debug,Deserialize,Serialize)]
 pub struct ChecksumsEntry {
     path: PathBuf,
@@ -40,9 +42,23 @@ impl ChecksumsEntry {
 
         let mut sha1 = Sha1::new();
         let mut data = Vec::<u8>::new();
-        // :TODO: read blockwise
-        f.read_to_end(&mut data);
-        sha1.update(&mut data);
+        // :TODO: make configurable
+        const BLOCKSIZE: usize = 128*1024;
+
+        if BLOCKSIZE == 0 {
+            f.read_to_end(&mut data);
+            sha1.update(&mut data);
+        } else {
+            let mut r = BufReader::with_capacity( BLOCKSIZE, f );
+            let mut buffer = [0; BLOCKSIZE];
+            loop {
+                let n = r.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                sha1.update(&buffer[..n]);
+            }
+        }
         let hash = sha1.digest();
         self.set_hash( &hash.to_string().to_uppercase() );
         Ok(())

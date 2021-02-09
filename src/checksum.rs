@@ -46,6 +46,10 @@ impl Checksum {
 #[async_trait]
 impl CommandAsync for Checksum {
     async fn run( &mut self ) -> anyhow::Result<()> {
+
+        // :TODO: make configurable
+        rayon::ThreadPoolBuilder::new().num_threads(8).build_global().unwrap();
+
         let mut checksums = Checksums::new( "sha1" );
 
         
@@ -88,6 +92,7 @@ impl CommandAsync for Checksum {
         );
         let algorithm = checksums.algorithm().to_string();
 //        for e in checksums.entries_mut().par_iter_mut() {
+//        checksums.entries_mut().iter_mut()
         checksums.entries_mut().par_iter_mut()
             .for_each(|e| {
                 bar.inc( 1 );
