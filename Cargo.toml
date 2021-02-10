@@ -3,6 +3,13 @@ name = "folder-compare-rs"
 version = "0.1.0"
 authors = ["Andreas Neukoetter <andreas@omni-mad.com>"]
 edition = "2018"
+license = "MIT"
+description = "A tool to compare folder contents via checksums."
+readme = "README.md"
+homepage = "https://github.com/AndreasOM/folder-compare-rs"
+repository = "https://github.com/AndreasOM/folder-compare-rs"
+keywords = ["cli", "checksum"]
+categories = ["command-line-utilities"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
