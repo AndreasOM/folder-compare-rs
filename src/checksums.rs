@@ -4,8 +4,10 @@ use serde::{Deserialize, Serialize};
 use rayon::prelude::*;
 use std::io::Read;
 use sha1::Sha1;
+use crate::message::Message;
 
 use std::io::BufReader;
+use std::sync::mpsc::Sender;
 
 #[derive(Debug,Deserialize,Serialize)]
 pub struct ChecksumsEntry {
@@ -31,7 +33,7 @@ impl ChecksumsEntry {
         self.hash = hash.to_string();
     }
 
-    pub fn calculate_hash(&mut self, base_dir: &Path, algorithm: &str ) -> anyhow::Result< () > {
+    pub fn calculate_hash(&mut self, base_dir: &Path, algorithm: &str, maybe_tx: Option< Sender< Message > > ) -> anyhow::Result< () > {
         let mut fullpath = PathBuf::new();
         fullpath.push( &base_dir );
         fullpath.push( &self.path() );
@@ -57,10 +59,16 @@ impl ChecksumsEntry {
                     break;
                 }
                 sha1.update(&buffer[..n]);
+                if let Some( ref tx ) = maybe_tx {
+                    tx.send( Message::Progress( n ) );
+                }
             }
         }
         let hash = sha1.digest();
         self.set_hash( &hash.to_string().to_uppercase() );
+        if let Some( ref tx ) = maybe_tx {
+            tx.send( Message::FileDone );
+        }
         Ok(())
     }
 

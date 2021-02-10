@@ -98,7 +98,7 @@ impl CommandAsync for Verifier {
                     if o.size() != n.size() {
                         changed.push( o.path().to_owned() );
                     } else {
-                        n.calculate_hash( &self.base_dir, &algorithm );
+                        n.calculate_hash( &self.base_dir, &algorithm, None );
                         if o.hash() != n.hash() {
                             changed.push( o.path().to_owned() );
                         } else {

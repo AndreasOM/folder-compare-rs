@@ -5,7 +5,11 @@ use std::path::{Path,PathBuf};
 use std::io::Read;
 use crate::checksums::*;
 use crate::command_async::CommandAsync;
-use indicatif::{ProgressBar,ProgressStyle};
+use crate::message::Message;
+
+use indicatif::{MultiProgress,ProgressBar,ProgressStyle};
+use std::sync::mpsc::channel;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 use rayon::prelude::*;
 
@@ -90,17 +94,92 @@ impl CommandAsync for Checksum {
             ProgressStyle::default_bar()
             .template( "{spinner:.green} Calculating checksums [{wide_bar:.cyan/blue}] {pos}/{len} {percent}% ETA: ~{eta}" )
         );
+
+        // handle progress update in thread, so we can let rayon do the work management
+        let (tx,rx) = channel();
+        let total_size = checksums.total_size();
+        let total_files = checksums.len() as u64;
+        let watcher = tokio::spawn(async move {
+            let mut keep_running = true;
+            let mut delay = 20;
+            let mut multi_bar = MultiProgress::new();
+            let bar_size = ProgressBar::new( total_size );
+//            let bar_size = multi_bar.add( bar_size );
+            bar_size.set_style(
+                ProgressStyle::default_bar()
+                .template( "{spinner:.green} Calculating checksums [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} at {bytes_per_sec} bytes/s {percent}% ETA: ~{eta_precise}" )
+            );
+            let bar_files = ProgressBar::new( total_files );
+//            let bar_files = multi_bar.add( bar_files );
+            bar_files.set_style(
+                ProgressStyle::default_bar()
+                .template( "{spinner:.green} Calculating checksums [{wide_bar:.cyan/blue}] {pos}/{len} {percent}% ETA: ~{eta}" )
+            );
+
+            while keep_running {
+                tokio::time::delay_for( std::time::Duration::from_millis(delay) ).await;
+                match rx.try_recv() {
+                    Ok( msg ) => {
+                        match msg {
+                            Message::Started( total_size, total_files ) => {
+                                bar_size.set_length( total_size as u64 );
+                                bar_files.set_length( total_files as u64 );
+                            },
+                            Message::Progress( size ) => {
+                                bar_size.inc( size as u64 );
+                            },
+                            Message::FileDone => {
+//                                bar_files.inc( 1 );   // :TODO: MultiProgress currently seems broken :(
+                            },
+                            Message::Done => {
+                                keep_running = false;
+                            },
+                            m => {
+                                dbg!(&m);
+                            },
+                        }
+                        delay = 1;      // if we got a mesage we try again fast
+                    },
+                    Err( _e ) => {
+                        delay = 2000;   // if we didn't get a message we can sleep for a bit
+                    },
+                }
+//                dbg!(&delay);
+            }; // while keep_running
+            multi_bar.join();
+        });
+
+        tx.send( Message::Started( checksums.total_size(), checksums.len() as u64 ) )?;
+
         let algorithm = checksums.algorithm().to_string();
-//        for e in checksums.entries_mut().par_iter_mut() {
-//        checksums.entries_mut().iter_mut()
+        let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads( 16 )
+                    .build()
+                    .unwrap();
+        let entries = checksums.entries_mut();
+        let base_dir = self.base_dir.clone();
+        let ctx = tx.clone();
+        pool.scope(move |s| {
+            for e in entries.into_iter() {
+                let tx = ctx.clone();
+                let base_dir = base_dir.clone();
+                let algorithm = algorithm.clone();
+                s.spawn(move |_| {
+                    e.calculate_hash( &base_dir, &algorithm, Some( tx ) );
+                });
+            }
+        });
+        /*
         checksums.entries_mut().par_iter_mut()
             .for_each(|e| {
                 bar.inc( 1 );
-                e.calculate_hash( &self.base_dir, &algorithm );
+                e.calculate_hash( &self.base_dir, &algorithm, Some( tx ) );
             });
-//        }
+            */
+        tx.send( Message::Done );
 //        dbg!( &checksums );
         checksums.save( &self.checksum_file );
+        tokio::join!( watcher );
         Ok(())
     }
 }

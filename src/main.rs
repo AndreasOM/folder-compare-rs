@@ -141,3 +141,4 @@ mod checksums;
 mod compare;
 mod verifier;
 mod command_async;
+mod message;
