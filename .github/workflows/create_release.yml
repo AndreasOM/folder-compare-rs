@@ -1,0 +1,157 @@
+name: Release Binaries
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "*-alpha"
+
+jobs:
+  create_release:
+    permissions:
+      contents: write
+    name: Create Release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+
+      - name: Prepare Variables
+        run: |
+          app_version=$(grep version Cargo.toml|cut -d"\"" -f2|head -n 1)
+          echo "APP_VERSION=${app_version}" >> $GITHUB_ENV
+
+      - name: Create DRAFT Release
+        run: |
+          gh release create ${{ env.APP_VERSION }} --draft
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Summary
+        run: |
+          echo "| APP_VERSION  | ${{ env.APP_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| :----------- | ---------------------: |" >> $GITHUB_STEP_SUMMARY
+
+  release_binaries:
+    permissions:
+      contents: write
+    name: Release Binaries
+    needs: create_release
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      matrix:
+        build:
+          - linux x86
+          - windows x86
+          - macos aarch64
+        include:
+          - build: linux x86
+            os: ubuntu-latest
+            package_prefix: folder-compare-rs-x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-gnu
+          - build: macos aarch64
+            os: macos-11
+            package_prefix: folder-compare-rs-aarch64-apple-darwin
+            target: aarch64-apple-darwin
+          - build: windows x86
+            os: windows-latest
+            package_prefix: folder-compare-rs-x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Prepare Variables
+        run: |
+          app_version=$(grep version Cargo.toml|cut -d"\"" -f2|head -n 1)
+          echo "APP_VERSION=${app_version}" >> $GITHUB_ENV
+
+
+      - name: Install stable rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target}}
+
+      - name: Build
+        run: |
+          cargo build --release --all-features --target ${{ matrix.target}}
+
+##      - name: Install Stable rust
+##        uses: actions-rs/toolchain@v1
+##        with:
+##          profile: minimal
+##          toolchain: stable
+##          target: ${{ matrix.target}}
+##
+##      - uses: actions-rs/cargo@v1
+##        with:
+##          command: build
+##          args: --release --all-features --target ${{ matrix.target}}
+
+      - name: Create Distribution
+        run: |
+          dist_dir="${{ runner.temp }}/dist/${{ matrix.package_prefix}}"
+          mkdir -p ${dist_dir}
+          cp target/${{ matrix.target}}/release/folder-compare-rs ${dist_dir}
+          cd ${dist_dir}
+          pwd
+          ls
+          cd ..
+          pwd
+          ls -l
+          ls -l ${{ matrix.package_prefix}}/*
+          tar czf ${{ matrix.package_prefix}}-${{ env.APP_VERSION }}.tgz ${{ matrix.package_prefix}}/*
+          ls -l
+
+      - name: Upload to Release
+        run: |
+          dist_dir="${{ runner.temp }}/dist/${{ matrix.package_prefix}}"
+          gh release upload ${{ env.APP_VERSION }} ${dist_dir}/../${{ matrix.package_prefix}}-${{ env.APP_VERSION }}.tgz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Summary
+        run: |
+          echo "| APP_VERSION  | ${{ env.APP_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| :----------- | ---------------------: |" >> $GITHUB_STEP_SUMMARY
+
+  release_release:
+    permissions:
+      contents: write
+    name: Release Release
+    needs: release_binaries
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+
+      - name: Prepare Variables
+        run: |
+          app_version=$(grep version Cargo.toml|cut -d"\"" -f2|head -n 1)
+          echo "APP_VERSION=${app_version}" >> $GITHUB_ENV
+
+      - name: Create Release
+        run: |
+          gh release edit ${{ env.APP_VERSION }} --draft=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Summary
+        run: |
+          echo "| APP_VERSION  | ${{ env.APP_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| :----------- | ---------------------: |" >> $GITHUB_STEP_SUMMARY
